@@ -8,4 +8,4 @@ https://papers.nips.cc/paper/9700-reverse-engineering-recurrent-networks-for-sen
 # Data set
 
 Yelp review
-
+from: https://www.yelp.com/dataset/download
