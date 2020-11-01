@@ -1,4 +1,5 @@
 import json
+import numpy as np
 
 num_of_json = 70
 file = 'yelp_dataset/yelp_academic_dataset_review.json'
@@ -18,11 +19,11 @@ with open(file) as f:
 import torch
 from torchtext import data
 
-# Reproducing same results
-SEED = 2019
-
-# Torch
-torch.manual_seed(SEED)
+# # Reproducing same results
+# SEED = 2019
+#
+# # Torch
+# torch.manual_seed(SEED)
 
 TEXT = data.Field(tokenize='spacy', batch_first=True, include_lengths=True)
 LABEL = data.LabelField(dtype=torch.long, batch_first=True)
@@ -40,7 +41,9 @@ print(len(training_data.examples))
 
 import random
 
-train_data, test_data = training_data.split(split_ratio=0.7, random_state=random.seed(SEED))
+# train_data, test_data = training_data.split(split_ratio=0.7, random_state=random.seed(SEED))
+train_data, test_data = training_data.split(split_ratio=0.7)
+
 
 # %%
 
@@ -117,18 +120,13 @@ class RNN_sentiment(nn.Module):
         # print('packed_embedding:')
         # print(packed_embedding)
         if prev_hidden is None:
-            print('prev_hidden is None')
+            # print('prev_hidden is None')
             packed_output, hidden = self.rnn(packed_embedding)
         else:
-            print('prev_hidden is NOT None')
-            print(prev_hidden)
+            # print('prev_hidden is NOT None')
+            # print(prev_hidden)
             packed_output, hidden = self.rnn(packed_embedding, prev_hidden)
-        print('hidden:')
-        print(hidden)
-        print(hidden.shape)
-        print('packed_output:')
-        print(packed_output)
-        print(packed_output.data.shape)
+
         linear_outputs = self.linear(hidden)
         output = self.softmax(linear_outputs)
         return output, hidden
@@ -186,7 +184,7 @@ def train(model, iterator, optimizer, criterion):
     epoch_acc = 0
 
     # set the model in training phase
-    model.train()
+    model.train().double()
 
     for batch in iterator:
         # resets the gradients after every batch
@@ -199,11 +197,6 @@ def train(model, iterator, optimizer, criterion):
         predictions, hidden_val = model(text, text_lengths)
         predictions = torch.squeeze(predictions)
         hidden_val = torch.squeeze(hidden_val)
-        # print('hidden_val tensor:')
-        # print(hidden_val)
-        # print(hidden_val.shape)
-        # print('model state:')
-        # print(model.state_dict())
 
         # compute the loss
         loss = criterion(predictions, batch.label)
@@ -304,7 +297,9 @@ for epoch in range(N_EPOCHS):
 
 print(hidden_list.shape[0])
 rand_int = random.randrange(hidden_list.shape[0])
+print(rand_int)
 hidden_state = hidden_list[rand_int]
+hidden_state = hidden_state.detach().numpy()
 
 
 def loss_func(_hidden_state):
@@ -312,22 +307,29 @@ def loss_func(_hidden_state):
     zero_input = torch.zeros(1, 1, dtype=torch.long)
     len_zero_input = torch.empty(1)
     len_zero_input[0] = zero_input.shape[1]
+    # create hidden state tensor of previous step
+    _hs_prev = torch.from_numpy(_hidden_state)
+    _hs_prev = _hs_prev.reshape((1, 1, num_hidden_nodes))
+
+    # len_zero_input holds the length of the zero input vector
     # deactivates autograd
     with torch.no_grad():
-        hs = _hidden_state.reshape((1, 1, num_hidden_nodes))
         # run through 1 time step, thus h_(t) = f(h_(t-1), 0), where
         # input x = 0, and h_(t-1) is the hidden state for time step t-1
-        _, f_of_zero_input = model(zero_input, len_zero_input, hs)
-
-        elem_wise_sub = torch.sub(_hidden_state, f_of_zero_input)
-        elem_wise_square = torch.square(elem_wise_sub)
-        elem_sum = torch.sum(elem_wise_square)
-
+        _, f_of_zero_input = model(zero_input, len_zero_input, _hs_prev)
+        f_of_zero_input = f_of_zero_input.detach().numpy()
+        elem_wise_sub = np.subtract(_hidden_state, f_of_zero_input)
+        elem_wise_square = np.square(elem_wise_sub)
+        elem_sum = np.sum(elem_wise_square)
         # q is the loss function we want to minimize as written in the paper
-        q = elem_sum / elem_wise_sub.shape[0]
+        q = elem_sum / elem_wise_sub.size
         return q
 
 
+from scipy.optimize import fmin, minimize
 
-
+print(hidden_state)
+#use minimize()
+res = minimize(loss_func, hidden_state, method='nelder-mead')
+print(res)
 
