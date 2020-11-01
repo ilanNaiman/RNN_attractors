@@ -77,14 +77,14 @@ train_iterator, test_iterator = data.BucketIterator.splits(
 import torch.nn as nn
 
 
-class RNN_setiment(nn.Module):
+class RNN_sentiment(nn.Module):
 
-    ## For each element in the input sequence, each layer computes the following function:
+    # For each element in the input sequence, each layer computes the following function:
 
-    ## h_t = ReLU(W_ih*x_t+b_ih + W_hh*h_(t-1)+b_hh)
+    # h_t = ReLU(W_ih*x_t+b_ih + W_hh*h_(t-1)+b_hh)
 
-    ## where h_t is the hidden state at time t, x_t is the input at time t, and h_(t-1)
-    ## is the hidden state of the previous layer at time t-1 or the initial hidden state at time 0
+    # where h_t is the hidden state at time t, x_t is the input at time t, and h_(t-1)
+    # is the hidden state of the previous layer at time t-1 or the initial hidden state at time 0
 
     def __init__(self, vocab_size, embedding_dim, hidden_dim, output_dim, n_layers):
         # Constructor
@@ -108,30 +108,29 @@ class RNN_setiment(nn.Module):
         # activation function
         self.softmax = nn.LogSoftmax(dim=2)
 
-    def forward(self, text, text_length):
+    def forward(self, text, text_length, prev_hidden=None):
         embedded = self.embedding(text)
-        print('text')
-        print(text)
-        print('text_length')
-        print(text_length)
-        ## input can be of size T x B x * where T is the length of the longest sequence (equal to lengths[0]),
+        # input can be of size T x B x * where T is the length of the longest sequence (equal to lengths[0]),
         # B is the batch size, and * is any number of dimensions (including 0).
         # If batch_first is True, B x T x * input is expected.
         packed_embedding = nn.utils.rnn.pack_padded_sequence(embedded, text_length, batch_first=True)
-        print('packed_embedding:')
-        print(packed_embedding)
-        packed_output, hidden = self.rnn(packed_embedding)
+        # print('packed_embedding:')
+        # print(packed_embedding)
+        if prev_hidden is None:
+            print('prev_hidden is None')
+            packed_output, hidden = self.rnn(packed_embedding)
+        else:
+            print('prev_hidden is NOT None')
+            print(prev_hidden)
+            packed_output, hidden = self.rnn(packed_embedding, prev_hidden)
         print('hidden:')
         print(hidden)
+        print(hidden.shape)
+        print('packed_output:')
+        print(packed_output)
+        print(packed_output.data.shape)
         linear_outputs = self.linear(hidden)
-        # print('linear_outputs')
-        # print(linear_outputs.shape)
-        # print(linear_outputs)
         output = self.softmax(linear_outputs)
-        # print('output tensor:')
-        # print(output.shape)
-        # print(output.view)
-        # print(output)
         return output, hidden
 
 
@@ -146,7 +145,7 @@ num_output_nodes = 5
 num_layers = 1
 
 # instantiate the Rnn sentiment classification model for Yelp
-model = RNN_setiment(size_of_vocab, embedding_dim, num_hidden_nodes, num_output_nodes, num_layers)
+model = RNN_sentiment(size_of_vocab, embedding_dim, num_hidden_nodes, num_output_nodes, num_layers)
 
 # %%
 
@@ -200,12 +199,11 @@ def train(model, iterator, optimizer, criterion):
         predictions, hidden_val = model(text, text_lengths)
         predictions = torch.squeeze(predictions)
         hidden_val = torch.squeeze(hidden_val)
-        print('prediction tensor:')
-        print(predictions)
-        print(predictions.shape)
-        print('hidden_val tensor:')
-        print(hidden_val)
-        print(hidden_val.shape)
+        # print('hidden_val tensor:')
+        # print(hidden_val)
+        # print(hidden_val.shape)
+        # print('model state:')
+        # print(model.state_dict())
 
         # compute the loss
         loss = criterion(predictions, batch.label)
@@ -266,7 +264,7 @@ def evaluate(model, iterator, criterion):
 # %%
 
 
-N_EPOCHS = 2
+N_EPOCHS = 1
 best_valid_loss = float('inf')
 tensor = torch.ones(())
 hidden_list = tensor.new_tensor([])
@@ -277,10 +275,9 @@ for epoch in range(N_EPOCHS):
     # train the model
     train_loss, train_acc, hidden_values = train(model, train_iterator, optimizer, criterion)
     hidden_list = torch.cat((hidden_list, hidden_values), 0)
-    print('hidden_list:')
-    print(hidden_list)
-    print(hidden_list.shape)
-
+    # print('hidden_list:')
+    # print(hidden_list)
+    # print(hidden_list.shape)
 
     # evaluate the model
     valid_loss, valid_acc = evaluate(model, test_iterator, criterion)
@@ -309,17 +306,27 @@ print(hidden_list.shape[0])
 rand_int = random.randrange(hidden_list.shape[0])
 hidden_state = hidden_list[rand_int]
 
-# tensor full of zeros
-zero_input = torch.zeros(embedding_dim)
 
+def loss_func(_hidden_state):
+    # tensor full of zeros
+    zero_input = torch.zeros(1, 1, dtype=torch.long)
+    len_zero_input = torch.empty(1)
+    len_zero_input[0] = zero_input.shape[1]
+    # deactivates autograd
+    with torch.no_grad():
+        hs = _hidden_state.reshape((1, 1, num_hidden_nodes))
+        # run through 1 time step, thus h_(t) = f(h_(t-1), 0), where
+        # input x = 0, and h_(t-1) is the hidden state for time step t-1
+        _, f_of_zero_input = model(zero_input, len_zero_input, hs)
 
-# deactivates autograd
-with torch.no_grad():
-    F_of_zero_input = model(zero_input, zero_input.shape[0])
-    elem_wise_sub = torch.sub(hidden_state, F_of_zero_input)
-    elem_wise_square = torch.square(elem_wise_sub)
-    elem_sum = torch.sum(elem_wise_square)
-    q = elem_sum / elem_wise_sub.shape[0]
+        elem_wise_sub = torch.sub(_hidden_state, f_of_zero_input)
+        elem_wise_square = torch.square(elem_wise_sub)
+        elem_sum = torch.sum(elem_wise_square)
+
+        # q is the loss function we want to minimize as written in the paper
+        q = elem_sum / elem_wise_sub.shape[0]
+        return q
+
 
 
 
