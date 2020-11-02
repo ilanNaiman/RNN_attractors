@@ -44,7 +44,6 @@ import random
 # train_data, test_data = training_data.split(split_ratio=0.7, random_state=random.seed(SEED))
 train_data, test_data = training_data.split(split_ratio=0.7)
 
-
 # %%
 
 # initialize glove embeddings
@@ -293,14 +292,8 @@ for epoch in range(N_EPOCHS):
     the trained network, which was done to intentionally sample states related to the operation of the RNN.
 """
 
+
 # generate random integer to sample some random state of activations:
-
-print(hidden_list.shape[0])
-rand_int = random.randrange(hidden_list.shape[0])
-print(rand_int)
-hidden_state = hidden_list[rand_int]
-hidden_state = hidden_state.detach().numpy()
-
 
 def loss_func(_hidden_state):
     # tensor full of zeros
@@ -326,10 +319,20 @@ def loss_func(_hidden_state):
         return q
 
 
-from scipy.optimize import fmin, minimize
+from scipy.optimize import minimize
 
-print(hidden_state)
-#use minimize()
-res = minimize(loss_func, hidden_state, method='nelder-mead')
-print(res)
+fixed_point_list = []
+for _ in range(20):
+    # print(hidden_list.shape[0])
+    rand_int = random.randrange(hidden_list.shape[0])
+    # print(rand_int)
+    hidden_state = hidden_list[rand_int]
+    hidden_state = hidden_state.detach().numpy()
 
+    # print(hidden_state)
+    # use minimize()
+    res = minimize(loss_func, hidden_state, method='nelder-mead')
+    fixed_point_list.append(res.success)
+
+result = filter(lambda x: x, fixed_point_list)
+print(list(result))
