@@ -1,7 +1,7 @@
 import json
 import numpy as np
 
-num_of_json = 70
+num_of_json = 100000
 file = 'yelp_dataset/yelp_academic_dataset_review.json'
 parsed_file = 'yelp_review_small.json'
 list_of_reviews_rate = []
@@ -256,7 +256,7 @@ def evaluate(model, iterator, criterion):
 # %%
 
 
-N_EPOCHS = 1
+N_EPOCHS = 3
 best_valid_loss = float('inf')
 tensor = torch.ones(())
 hidden_list = tensor.new_tensor([])
@@ -322,17 +322,31 @@ def loss_func(_hidden_state):
 from scipy.optimize import minimize
 
 fixed_point_list = []
-for _ in range(20):
+seen_rands = set()
+
+for _ in range(700):
     # print(hidden_list.shape[0])
     rand_int = random.randrange(hidden_list.shape[0])
     # print(rand_int)
+    if rand_int in seen_rands:
+        continue
+    seen_rands.add(rand_int)
     hidden_state = hidden_list[rand_int]
     hidden_state = hidden_state.detach().numpy()
 
     # print(hidden_state)
-    # use minimize()
-    res = minimize(loss_func, hidden_state, method='nelder-mead')
-    fixed_point_list.append(res.success)
+    # use minimize() with gradient based method
+    # Gradient descent basically consists in taking small steps in the direction of the gradient,
+    # that is the direction of the steepest descent.
+    """
+        one of the problems of the simple gradient descent algorithms, is that it tends to oscillate across a valley,
+        each time following the direction of the gradient, that makes it cross the valley. The conjugate gradient solves
+        this problem by adding a friction term: each step depends on the two last values of the gradient and sharp 
+        turns are reduced.
+    """
+    res = minimize(loss_func, hidden_state, method="CG", tol=1e-8)
+    if res.success:
+        fixed_point_list.append(res)
 
-result = filter(lambda x: x, fixed_point_list)
-print(list(result))
+
+print(len(fixed_point_list))
