@@ -1,7 +1,18 @@
 import json
 import numpy as np
+import torch
+from torchtext import data
+import random
+import torch.nn as nn
+import torch.optim as opt
+from scipy.optimize import minimize
+from sklearn import decomposition
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
 
-num_of_json = 100000
+
+num_of_json = 600000
 file = 'yelp_dataset/yelp_academic_dataset_review.json'
 parsed_file = 'yelp_review_small.json'
 list_of_reviews_rate = []
@@ -16,8 +27,6 @@ with open(file) as f:
 
 # %%
 
-import torch
-from torchtext import data
 
 # # Reproducing same results
 # SEED = 2019
@@ -39,7 +48,6 @@ print(len(training_data.examples))
 
 # %%
 
-import random
 
 # train_data, test_data = training_data.split(split_ratio=0.7, random_state=random.seed(SEED))
 train_data, test_data = training_data.split(split_ratio=0.7)
@@ -75,8 +83,6 @@ train_iterator, test_iterator = data.BucketIterator.splits(
     sort_within_batch=True)
 
 # %%
-
-import torch.nn as nn
 
 
 class RNN_sentiment(nn.Module):
@@ -128,7 +134,7 @@ class RNN_sentiment(nn.Module):
 
         linear_outputs = self.linear(hidden)
         output = self.softmax(linear_outputs)
-        return output, hidden
+        return output, hidden, packed_output
 
 
 # %%
@@ -137,7 +143,7 @@ class RNN_sentiment(nn.Module):
 # hyper-parameters
 size_of_vocab = len(TEXT.vocab)
 embedding_dim = 100
-num_hidden_nodes = 32
+num_hidden_nodes = 128
 num_output_nodes = 5
 num_layers = 1
 
@@ -165,7 +171,6 @@ print(pretrained_embeddings.shape)
 
 # %%
 
-import torch.optim as opt
 
 criterion = nn.NLLLoss()
 optimizer = opt.Adam(model.parameters())
@@ -193,7 +198,7 @@ def train(model, iterator, optimizer, criterion):
         text, text_lengths = batch.text
 
         # convert to 1D tensor
-        predictions, hidden_val = model(text, text_lengths)
+        predictions, hidden_val, _ = model(text, text_lengths)
         predictions = torch.squeeze(predictions)
         hidden_val = torch.squeeze(hidden_val)
 
@@ -228,16 +233,35 @@ def evaluate(model, iterator, criterion):
 
     # deactivating dropout layers
     model.eval()
+    tensor_emp = torch.ones(())
+    collected_states = tensor_emp.new_tensor([])
+    num_of_examples = 0
 
     # deactivates autograd
     with torch.no_grad():
         for batch in iterator:
+            num_of_examples += batch.batch_size
             # retrieve text and no. of words
             text, text_lengths = batch.text
-
+            # print('\n\n###########  TEXT ###########')
+            # print(text)
+            # print(text.shape)
+            # print('\n\n###########  text_lengths ###########')
+            # print(sum(list(text_lengths)))
             # convert to 1d tensor
-            predictions, _ = model(text, text_lengths)
+            predictions, _, packed_hidden = model(text, text_lengths)
             predictions = torch.squeeze(predictions)
+            # print('\n\n#####################################')
+            # print('packed_hidden size:')
+            # print(packed_hidden.data.shape)
+            # print('\n\n#####################################')
+            # print('packed_hidden.data:')
+            # print(packed_hidden.data)
+            # print('\n\n################ collected_states  #####################')
+            if num_of_examples < 1000:
+                collected_states = torch.cat((collected_states, packed_hidden.data), 0)
+            # print(collected_states)
+            # print(collected_states.shape)
 
             # compute loss and accuracy
             loss = criterion(predictions, batch.label)
@@ -250,20 +274,19 @@ def evaluate(model, iterator, criterion):
             epoch_loss += loss.item()
             epoch_acc += acc.item()
 
-    return epoch_loss / len(iterator), epoch_acc / len(iterator)
+    return epoch_loss / len(iterator), epoch_acc / len(iterator), collected_states
 
 
 # %%
 
 
-N_EPOCHS = 3
+N_EPOCHS = 2
 best_valid_loss = float('inf')
 tensor = torch.ones(())
 hidden_list = tensor.new_tensor([])
 print(hidden_list)
 
 for epoch in range(N_EPOCHS):
-
     # train the model
     train_loss, train_acc, hidden_values = train(model, train_iterator, optimizer, criterion)
     hidden_list = torch.cat((hidden_list, hidden_values), 0)
@@ -272,7 +295,9 @@ for epoch in range(N_EPOCHS):
     # print(hidden_list.shape)
 
     # evaluate the model
-    valid_loss, valid_acc = evaluate(model, test_iterator, criterion)
+    valid_loss, valid_acc, collected_states = evaluate(model, test_iterator, criterion)
+
+    # collect RNN states concatenated across 1,000 test examples.
 
     # save the best model
     if valid_loss < best_valid_loss:
@@ -319,34 +344,69 @@ def loss_func(_hidden_state):
         return q
 
 
-from scipy.optimize import minimize
-
 fixed_point_list = []
 seen_rands = set()
 
-for _ in range(700):
-    # print(hidden_list.shape[0])
-    rand_int = random.randrange(hidden_list.shape[0])
-    # print(rand_int)
-    if rand_int in seen_rands:
-        continue
-    seen_rands.add(rand_int)
-    hidden_state = hidden_list[rand_int]
-    hidden_state = hidden_state.detach().numpy()
 
-    # print(hidden_state)
-    # use minimize() with gradient based method
-    # Gradient descent basically consists in taking small steps in the direction of the gradient,
-    # that is the direction of the steepest descent.
-    """
-        one of the problems of the simple gradient descent algorithms, is that it tends to oscillate across a valley,
-        each time following the direction of the gradient, that makes it cross the valley. The conjugate gradient solves
-        this problem by adding a friction term: each step depends on the two last values of the gradient and sharp 
-        turns are reduced.
-    """
-    res = minimize(loss_func, hidden_state, method="CG", tol=1e-8)
-    if res.success:
-        fixed_point_list.append(res)
+def find_fixed_points():
+    for _ in range(700):
+        # print(hidden_list.shape[0])
+        rand_int = random.randrange(hidden_list.shape[0])
+        # print(rand_int)
+        if rand_int in seen_rands:
+            continue
+        seen_rands.add(rand_int)
+        hidden_state = hidden_list[rand_int]
+        hidden_state = hidden_state.detach().numpy()
+
+        # print(hidden_state)
+        # use minimize() with gradient based method
+        # Gradient descent basically consists in taking small steps in the direction of the gradient,
+        # that is the direction of the steepest descent.
+        """
+            one of the problems of the simple gradient descent algorithms, is that it tends to oscillate across a valley,
+            each time following the direction of the gradient, that makes it cross the valley. The conjugate gradient solves
+            this problem by adding a friction term: each step depends on the two last values of the gradient and sharp 
+            turns are reduced.
+        """
+        res = minimize(loss_func, hidden_state, method="CG", tol=1e-8)
+        if res.success:
+            fixed_point_list.append(res)
 
 
-print(len(fixed_point_list))
+# find_fixed_points()
+# print(len(fixed_point_list))
+# print(collected_states)
+collected_states = np.array(collected_states)
+print(len(collected_states))
+
+
+def pca_hs(states_list):
+    states_list = StandardScaler().fit_transform(states_list)
+    pca = decomposition.PCA(n_components=2)
+    principal_components = pca.fit_transform(states_list)
+    principal_df = pd.DataFrame(data=principal_components,
+                                columns=['principal component 1', 'principal component 2'])
+    target = ['0' for _ in range(len(states_list))]
+    principal_df['target'] = target
+    fig = plt.figure(figsize=(8, 8))
+    ax = fig.add_subplot(1, 1, 1)
+    ax.set_xlabel('Principal Component 1', fontsize=15)
+    ax.set_ylabel('Principal Component 2', fontsize=15)
+    ax.set_title('2 component PCA', fontsize=20)
+    targets = ['0']
+    colors = ['r']
+    for target, color in zip(targets, colors):
+        indicesToKeep = principal_df['target'] == target
+        ax.scatter(principal_df.loc[indicesToKeep, 'principal component 1']
+                   , principal_df.loc[indicesToKeep, 'principal component 2']
+                   , c=color
+                   , s=50)
+    ax.legend(target)
+    ax.grid()
+    plt.show()
+    print('\n ################## Explained Variance ################## \n')
+    print(pca.explained_variance_ratio_)
+
+
+pca_hs(collected_states)
